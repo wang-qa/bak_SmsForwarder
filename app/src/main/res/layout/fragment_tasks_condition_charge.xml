@@ -45,7 +45,7 @@
                     android:id="@+id/tv_description"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/task_battery_tips"
+                    android:text="@string/task_charge_tips"
                     android:textSize="@dimen/text_size_mini"
                     tools:ignore="SmallSp" />
 
@@ -141,9 +141,9 @@
                         tools:ignore="TouchTargetSizeCheck" />
 
                     <RadioButton
-                        android:id="@+id/rb_plugged_unknown"
+                        android:id="@+id/rb_plugged_unlimited"
                         style="@style/rg_rb_style"
-                        android:text="@string/battery_unknown"
+                        android:text="@string/battery_unlimited"
                         tools:ignore="TouchTargetSizeCheck" />
 
                 </RadioGroup>

@@ -2,6 +2,7 @@ package com.idormy.sms.forwarder.utils.sender
 
 import android.text.TextUtils
 import com.google.gson.Gson
+import com.idormy.sms.forwarder.R
 import com.idormy.sms.forwarder.database.entity.Rule
 import com.idormy.sms.forwarder.entity.MsgInfo
 import com.idormy.sms.forwarder.entity.result.TelegramResult
@@ -9,10 +10,12 @@ import com.idormy.sms.forwarder.entity.setting.TelegramSetting
 import com.idormy.sms.forwarder.utils.Log
 import com.idormy.sms.forwarder.utils.SendUtils
 import com.idormy.sms.forwarder.utils.SettingUtils
+import com.idormy.sms.forwarder.utils.interceptor.LoggingInterceptor
 import com.xuexiang.xhttp2.XHttp
 import com.xuexiang.xhttp2.callback.SimpleCallBack
 import com.xuexiang.xhttp2.exception.ApiException
 import com.xuexiang.xutil.net.NetworkUtils
+import com.xuexiang.xutil.resource.ResUtils.getString
 import okhttp3.Credentials
 import okhttp3.Response
 import okhttp3.Route
@@ -35,7 +38,7 @@ class TelegramUtils private constructor() {
             logId: Long = 0L,
             msgId: Long = 0L
         ) {
-            if (setting.method == null || setting.method == "POST") {
+            if (setting.method == "POST") {
                 msgInfo.content = htmlEncode(msgInfo.content)
                 msgInfo.simInfo = htmlEncode(msgInfo.simInfo)
             }
@@ -53,15 +56,31 @@ class TelegramUtils private constructor() {
             }
             Log.i(TAG, "requestUrl:$requestUrl")
 
-            val request = if (setting.method != null && setting.method == "GET") {
+            val request = if (setting.method == "GET") {
                 requestUrl += "?chat_id=" + setting.chatId + "&text=" + URLEncoder.encode(content, "UTF-8")
+                if (setting.parseMode.isNotEmpty() && setting.parseMode != "TEXT") {
+                    requestUrl += "&parse_mode=" + setting.parseMode
+                }
                 Log.i(TAG, "requestUrl:$requestUrl")
                 XHttp.get(requestUrl)
             } else {
                 val bodyMap: MutableMap<String, Any> = mutableMapOf()
                 bodyMap["chat_id"] = setting.chatId
-                bodyMap["text"] = content
-                bodyMap["parse_mode"] = "HTML"
+                when (setting.parseMode) {
+                    "MarkdownV2" -> {
+                        bodyMap["parse_mode"] = "MarkdownV2"
+                        bodyMap["text"] = escapeMarkdownV2(content)
+                    }
+
+                    "HTML" -> {
+                        bodyMap["parse_mode"] = "HTML"
+                        bodyMap["text"] = content
+                    }
+
+                    else -> {
+                        bodyMap["text"] = content
+                    }
+                }
                 bodyMap["disable_web_page_preview"] = "true"
                 val requestMsg: String = Gson().toJson(bodyMap)
                 Log.i(TAG, "requestMsg:$requestMsg")
@@ -76,23 +95,22 @@ class TelegramUtils private constructor() {
                 Log.d(TAG, "proxyHost = ${setting.proxyHost}, proxyPort = ${setting.proxyPort}")
                 val proxyHost = if (NetworkUtils.isIP(setting.proxyHost)) setting.proxyHost else NetworkUtils.getDomainAddress(setting.proxyHost)
                 if (!NetworkUtils.isIP(proxyHost)) {
-                    throw Exception("代理服务器主机名解析失败：proxyHost=$proxyHost")
+                    throw Exception(String.format(getString(R.string.invalid_proxy_host), proxyHost))
                 }
-                val proxyPort: Int = setting.proxyPort?.toInt() ?: 7890
+                val proxyPort: Int = setting.proxyPort.toInt()
 
                 Log.d(TAG, "proxyHost = $proxyHost, proxyPort = $proxyPort")
                 request.okproxy(Proxy(setting.proxyType, InetSocketAddress(proxyHost, proxyPort)))
 
                 //代理的鉴权账号密码
-                if (setting.proxyAuthenticator == true
-                    && (!TextUtils.isEmpty(setting.proxyUsername) || !TextUtils.isEmpty(setting.proxyPassword))
+                if (setting.proxyAuthenticator && (!TextUtils.isEmpty(setting.proxyUsername) || !TextUtils.isEmpty(setting.proxyPassword))
                 ) {
                     Log.i(TAG, "proxyUsername = ${setting.proxyUsername}, proxyPassword = ${setting.proxyPassword}")
 
                     if (setting.proxyType == Proxy.Type.HTTP) {
                         request.okproxyAuthenticator { _: Route?, response: Response ->
                             //设置代理服务器账号密码
-                            val credential = Credentials.basic(setting.proxyUsername.toString(), setting.proxyPassword.toString())
+                            val credential = Credentials.basic(setting.proxyUsername, setting.proxyPassword)
                             response.request().newBuilder()
                                 .header("Proxy-Authorization", credential)
                                 .build()
@@ -100,7 +118,7 @@ class TelegramUtils private constructor() {
                     } else {
                         Authenticator.setDefault(object : Authenticator() {
                             override fun getPasswordAuthentication(): PasswordAuthentication {
-                                return PasswordAuthentication(setting.proxyUsername.toString(), setting.proxyPassword?.toCharArray())
+                                return PasswordAuthentication(setting.proxyUsername, setting.proxyPassword.toCharArray())
                             }
                         })
                     }
@@ -152,6 +170,19 @@ class TelegramUtils private constructor() {
                 }
             }
             return buffer.toString()
+        }
+
+        // 用于转义 MarkdownV2 特殊字符的方法
+        private fun escapeMarkdownV2(text: String): String {
+            // TODO: MarkdownV2 要求转义以下字符，实测不能全部转义（丢失格式）
+            //val specialChars = listOf('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!')
+            val specialChars = listOf('-')
+            var escapedText = text
+            for (char in specialChars) {
+                // 将每个字符替换为带反斜杠的形式
+                escapedText = escapedText.replace(char.toString(), "\\$char")
+            }
+            return escapedText
         }
     }
 }

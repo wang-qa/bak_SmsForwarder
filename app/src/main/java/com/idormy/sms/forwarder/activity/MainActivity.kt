@@ -36,6 +36,8 @@ import com.idormy.sms.forwarder.fragment.ServerFragment
 import com.idormy.sms.forwarder.fragment.SettingsFragment
 import com.idormy.sms.forwarder.fragment.TasksFragment
 import com.idormy.sms.forwarder.service.ForegroundService
+import com.idormy.sms.forwarder.utils.ACTION_START
+import com.idormy.sms.forwarder.utils.CommonUtils.Companion.restartApplication
 import com.idormy.sms.forwarder.utils.EVENT_LOAD_APP_LIST
 import com.idormy.sms.forwarder.utils.FRPC_LIB_DOWNLOAD_URL
 import com.idormy.sms.forwarder.utils.FRPC_LIB_VERSION
@@ -49,6 +51,7 @@ import com.jeremyliao.liveeventbus.LiveEventBus
 import com.xuexiang.xhttp2.XHttp
 import com.xuexiang.xhttp2.callback.DownloadProgressCallBack
 import com.xuexiang.xhttp2.exception.ApiException
+import com.xuexiang.xui.XUI.getContext
 import com.xuexiang.xui.utils.ResUtils
 import com.xuexiang.xui.utils.ThemeUtils
 import com.xuexiang.xui.utils.ViewUtils
@@ -62,7 +65,6 @@ import com.yarolegovich.slidingrootnav.SlideGravity
 import com.yarolegovich.slidingrootnav.SlidingRootNav
 import com.yarolegovich.slidingrootnav.SlidingRootNavBuilder
 import com.yarolegovich.slidingrootnav.callback.DragStateListener
-import frpclib.Frpclib
 import java.io.File
 
 @Suppress("PrivatePropertyName", "unused", "DEPRECATION")
@@ -121,7 +123,7 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
             //启动前台服务
             if (!ForegroundService.isRunning) {
                 val serviceIntent = Intent(this, ForegroundService::class.java)
-                serviceIntent.action = "START"
+                serviceIntent.action = ACTION_START
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
@@ -178,7 +180,7 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
         //仅当开启自动检查且有网络时自动检查更新/获取提示
         if (SettingUtils.autoCheckUpdate && NetworkUtils.isHaveInternet()) {
             showTips(this)
-            XUpdateInit.checkUpdate(this, false)
+            XUpdateInit.checkUpdate(this, false, SettingUtils.joinPreviewProgram)
         }
     }
 
@@ -206,10 +208,6 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
     private fun initSlidingMenu(savedInstanceState: Bundle?) {
         mSlidingRootNav = SlidingRootNavBuilder(this).withGravity(if (ResUtils.isRtl(this)) SlideGravity.RIGHT else SlideGravity.LEFT).withMenuOpened(false).withContentClickableWhenMenuOpened(false).withSavedState(savedInstanceState).withMenuLayout(R.layout.menu_left_drawer).inject()
         mLLMenu = mSlidingRootNav.layout.findViewById(R.id.ll_menu)
-        //val ivQrcode = mSlidingRootNav.layout.findViewById<AppCompatImageView>(R.id.iv_qrcode)
-        //ivQrcode.setOnClickListener { openNewPage(SettingsFragment::class.java) }
-        //val ivSetting = mSlidingRootNav.layout.findViewById<AppCompatImageView>(R.id.iv_setting)
-        //ivSetting.setOnClickListener { openNewPage(SettingsFragment::class.java) }
         ViewUtils.setVisibility(mLLMenu, false)
         mAdapter = DrawerAdapter(
             mutableListOf(
@@ -242,25 +240,6 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
 
             override fun onDragEnd(isMenuOpened: Boolean) {
                 ViewUtils.setVisibility(mLLMenu, isMenuOpened)
-                /*if (isMenuOpened) {
-                    if (!GuideCaseView.isShowOnce(this@MainActivity, getString(R.string.guide_key_sliding_root_navigation))) {
-                        val guideStep1 = GuideCaseView.Builder(this@MainActivity)
-                            .title("点击进入，可切换主题样式哦～～")
-                            .titleSize(18, TypedValue.COMPLEX_UNIT_SP)
-                            .focusOn(ivSetting)
-                            .build()
-                        val guideStep2 = GuideCaseView.Builder(this@MainActivity)
-                            .title("点击进入，扫码关注哦～～")
-                            .titleSize(18, TypedValue.COMPLEX_UNIT_SP)
-                            .focusOn(ivQrcode)
-                            .build()
-                        GuideCaseQueue()
-                            .add(guideStep1)
-                            .add(guideStep2)
-                            .show()
-                        GuideCaseView.setShowOnce(this@MainActivity, getString(R.string.guide_key_sliding_root_navigation))
-                    }
-                }*/
             }
         })
     }
@@ -278,7 +257,7 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
             POS_SERVER -> openNewPage(ServerFragment::class.java)
             POS_CLIENT -> openNewPage(ClientFragment::class.java)
             POS_FRPC -> {
-                if (FileUtils.isFileExists(filesDir.absolutePath + "/libs/libgojni.so") && FRPC_LIB_VERSION == Frpclib.getVersion()) {
+                if (App.FrpclibInited) {
                     openNewPage(FrpcFragment::class.java)
                     return
                 }
@@ -301,14 +280,26 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
             }
 
             POS_APPS -> {
-                if (App.UserAppList.isEmpty() && App.SystemAppList.isEmpty()) {
-                    XToastUtils.info(getString(R.string.loading_app_list))
-                    val request = OneTimeWorkRequestBuilder<LoadAppListWorker>().build()
-                    WorkManager.getInstance(this).enqueue(request)
-                    needToAppListFragment = true
-                    return
-                }
-                openNewPage(AppListFragment::class.java)
+                //检查读取应用列表权限是否获取
+                XXPermissions.with(this).permission(Permission.GET_INSTALLED_APPS).request(object : OnPermissionCallback {
+                    override fun onGranted(permissions: MutableList<String>, allGranted: Boolean) {
+                        if (App.UserAppList.isEmpty() && App.SystemAppList.isEmpty()) {
+                            XToastUtils.info(getString(R.string.loading_app_list))
+                            val request = OneTimeWorkRequestBuilder<LoadAppListWorker>().build()
+                            WorkManager.getInstance(getContext()).enqueue(request)
+                            needToAppListFragment = true
+                            return
+                        }
+                        openNewPage(AppListFragment::class.java)
+                    }
+
+                    override fun onDenied(permissions: MutableList<String>, doNotAskAgain: Boolean) {
+                        XToastUtils.error(R.string.tips_get_installed_apps)
+                        if (doNotAskAgain) {
+                            XXPermissions.startPermissionActivity(getContext(), permissions)
+                        }
+                    }
+                })
             }
 
             POS_HELP -> AgentWebActivity.goWeb(this, getString(R.string.url_help))
@@ -347,6 +338,7 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
             .build()
 
         XHttp.downLoad(downloadUrl)
+            .ignoreHttpsCert()
             .savePath(cacheDir.absolutePath)
             .execute(object : DownloadProgressCallBack<String?>() {
                 override fun onStart() {
@@ -379,9 +371,7 @@ class MainActivity : BaseActivity<ActivityMainBinding?>(), DrawerAdapter.OnItemS
                         .cancelable(false)
                         .positiveText(R.string.confirm)
                         .onPositive { _: MaterialDialog?, _: DialogAction? ->
-                            val intent = Intent(App.context, MainActivity::class.java)
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                            startActivity(intent)
+                            restartApplication()
                         }
                         .show()
                 }

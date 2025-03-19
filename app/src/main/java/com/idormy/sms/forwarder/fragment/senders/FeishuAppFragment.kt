@@ -4,9 +4,9 @@ import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import androidx.fragment.app.viewModels
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.idormy.sms.forwarder.R
 import com.idormy.sms.forwarder.core.BaseFragment
 import com.idormy.sms.forwarder.core.Core
@@ -94,6 +94,20 @@ class FeishuAppFragment : BaseFragment<FragmentSendersFeishuAppBinding?>(), View
             }
         })
 
+        binding!!.rgMsgType.setOnCheckedChangeListener { _, checkedId ->
+            if (checkedId == R.id.rb_msg_type_interactive) {
+                binding!!.layoutTitleTemplate.visibility = View.VISIBLE
+                binding!!.layoutMessageCard.visibility = View.VISIBLE
+            } else {
+                binding!!.layoutTitleTemplate.visibility = View.GONE
+                binding!!.layoutMessageCard.visibility = View.GONE
+            }
+        }
+
+        //创建标签按钮
+        CommonUtils.createTagButtons(requireContext(), binding!!.glTitleTemplate, binding!!.etTitleTemplate)
+        CommonUtils.createTagButtons(requireContext(), binding!!.glMessageCard, binding!!.etMessageCard)
+
         //新增
         if (senderId <= 0) {
             titleBar?.setSubTitle(getString(R.string.add_sender))
@@ -128,19 +142,17 @@ class FeishuAppFragment : BaseFragment<FragmentSendersFeishuAppBinding?>(), View
                     if (settingVo != null) {
                         binding!!.etAppId.setText(settingVo.appId)
                         binding!!.etAppSecret.setText(settingVo.appSecret)
-                        binding!!.etUserId.setText(settingVo.receiveId)
+                        binding!!.rgReceiveIdType.check(settingVo.getReceiveIdTypeCheckId())
+                        binding!!.etReceiveId.setText(settingVo.receiveId)
                         binding!!.rgMsgType.check(settingVo.getMsgTypeCheckId())
                         binding!!.etTitleTemplate.setText(settingVo.titleTemplate)
+                        binding!!.etMessageCard.setText(settingVo.messageCard)
                     }
                 }
             })
     }
 
     override fun initListeners() {
-        binding!!.btInsertSender.setOnClickListener(this)
-        binding!!.btInsertExtra.setOnClickListener(this)
-        binding!!.btInsertTime.setOnClickListener(this)
-        binding!!.btInsertDeviceName.setOnClickListener(this)
         binding!!.btnTest.setOnClickListener(this)
         binding!!.btnDel.setOnClickListener(this)
         binding!!.btnSave.setOnClickListener(this)
@@ -150,27 +162,7 @@ class FeishuAppFragment : BaseFragment<FragmentSendersFeishuAppBinding?>(), View
     @SingleClick
     override fun onClick(v: View) {
         try {
-            val etTitleTemplate: EditText = binding!!.etTitleTemplate
             when (v.id) {
-                R.id.bt_insert_sender -> {
-                    CommonUtils.insertOrReplaceText2Cursor(etTitleTemplate, getString(R.string.tag_from))
-                    return
-                }
-
-                R.id.bt_insert_extra -> {
-                    CommonUtils.insertOrReplaceText2Cursor(etTitleTemplate, getString(R.string.tag_card_slot))
-                    return
-                }
-
-                R.id.bt_insert_time -> {
-                    CommonUtils.insertOrReplaceText2Cursor(etTitleTemplate, getString(R.string.tag_receive_time))
-                    return
-                }
-
-                R.id.bt_insert_device_name -> {
-                    CommonUtils.insertOrReplaceText2Cursor(etTitleTemplate, getString(R.string.tag_device_name))
-                    return
-                }
 
                 R.id.btn_test -> {
                     mCountDownHelper?.start()
@@ -239,15 +231,31 @@ class FeishuAppFragment : BaseFragment<FragmentSendersFeishuAppBinding?>(), View
     private fun checkSetting(): FeishuAppSetting {
         val appId = binding!!.etAppId.text.toString().trim()
         val appSecret = binding!!.etAppSecret.text.toString().trim()
-        val receiveId = binding!!.etUserId.text.toString().trim()
+        val receiveId = binding!!.etReceiveId.text.toString().trim()
         if (TextUtils.isEmpty(appId) || TextUtils.isEmpty(appSecret) || TextUtils.isEmpty(receiveId)) {
             throw Exception(getString(R.string.invalid_feishu_app_parameter))
         }
 
+        val receiveIdType = when (binding!!.rgReceiveIdType.checkedRadioButtonId) {
+            R.id.rb_receive_id_type_open_id -> "open_id"
+            R.id.rb_receive_id_type_user_id -> "user_id"
+            R.id.rb_receive_id_type_union_id -> "union_id"
+            R.id.rb_receive_id_type_email -> "email"
+            R.id.rb_receive_id_type_chat_id -> "chat_id"
+            else -> "user_id"
+        }
         val msgType = if (binding!!.rgMsgType.checkedRadioButtonId == R.id.rb_msg_type_interactive) "interactive" else "text"
         val title = binding!!.etTitleTemplate.text.toString().trim()
+        val messageCard = binding!!.etMessageCard.text.toString().trim()
 
-        return FeishuAppSetting(appId, appSecret, receiveId, msgType, title)
+        try {
+            JsonParser.parseString(messageCard)
+        } catch (e: Exception) {
+            Log.e(TAG, "checkSetting error:$e")
+            throw Exception(getString(R.string.invalid_message_card))
+        }
+
+        return FeishuAppSetting(appId, appSecret, receiveId, msgType, title, receiveIdType, messageCard)
     }
 
     override fun onDestroyView() {
